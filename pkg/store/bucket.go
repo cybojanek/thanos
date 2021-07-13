@@ -2465,6 +2465,10 @@ func (r *bucketChunkReader) loadChunks(ctx context.Context, res []seriesEntry, a
 	r.stats.chunksFetchDurationSum += time.Since(fetchBegin)
 	r.stats.chunksFetchedSizeSum += int(part.End - part.Start)
 
+	// Unlock before we do IO.
+	r.mtx.Unlock()
+	locked = false
+
 	var (
 		buf        = make([]byte, EstimatedMaxChunkSize)
 		readOffset = int(pIdxs[0].offset)
@@ -2507,6 +2511,10 @@ func (r *bucketChunkReader) loadChunks(ctx context.Context, res []seriesEntry, a
 			return errors.New("reading chunk length failed")
 		}
 
+		// Lock before updating data.
+		r.mtx.Lock()
+		locked = true
+
 		// Chunk length is n (number of bytes used to encode chunk data), 1 for chunk encoding and chunkDataLen for actual chunk data.
 		// There is also crc32 after the chunk, but we ignore that.
 		chunkLen = n + 1 + int(chunkDataLen)
@@ -2517,6 +2525,9 @@ func (r *bucketChunkReader) loadChunks(ctx context.Context, res []seriesEntry, a
 			}
 			r.stats.chunksTouched++
 			r.stats.chunksTouchedSizeSum += int(chunkDataLen)
+
+			r.mtx.Unlock()
+			locked = false
 			continue
 		}
 
@@ -2551,6 +2562,9 @@ func (r *bucketChunkReader) loadChunks(ctx context.Context, res []seriesEntry, a
 		r.stats.chunksTouchedSizeSum += int(chunkDataLen)
 
 		r.block.chunkPool.Put(nb)
+
+		r.mtx.Unlock()
+		locked = false
 	}
 	return nil
 }
